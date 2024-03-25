@@ -1,4 +1,4 @@
-import {GraphQLQueryTree, PAGINATE} from "../";
+import {GraphQLQueryTree} from "../";
 import {RelationMetadata} from "typeorm/metadata/RelationMetadata";
 import {EntityMetadata, SelectQueryBuilder} from "typeorm";
 
@@ -17,20 +17,35 @@ export function buildQueryRecursively<T>(
     metadata: EntityMetadata
 ) {
     const options = tree.properties.options;
-
+    const selectSet = new Set(qb.expressionMap.selects.map(select => select.selection));
     // Firstly, we list all selected fields at this level of the query tree
     const selectedFields = tree.fields
-        .filter((field: GraphQLQueryTree<T>) => !field.isRelation())
-        .map((field: GraphQLQueryTree<T>) => alias + "." + field.name);
+        .reduce((acc, field) => {
+            const selection = alias + "." + field.name
+            if (field.isRelation() || selectSet.has(selection)) {
+                return acc;
+            }
+            acc.add(selection)
+            return acc;
+        }, new Set<string>());
+        // .filter((field: GraphQLQueryTree<T>) => !field.isRelation())
+        // .map((field: GraphQLQueryTree<T>) => alias + "." + field.name);
 
     // Secondly, we list all fields used in arguments
     const argFields = Object
         .keys(tree.properties.args)
-        .map((arg: string) => alias + "." + arg);
+        .reduce((acc, arg) => {
+            const argSelection = alias + "." + arg;
+            if (selectSet.has(argSelection)) {
+                return acc;
+            }
+            acc.add(argSelection);
+            return acc;
+        }, new Set<string>());
 
     // We select all of above
-    qb.addSelect(argFields);
-    qb.addSelect(selectedFields);
+    qb.addSelect(Array.from(argFields));
+    qb.addSelect(Array.from(selectedFields));
 
     // We add order options
     Object.keys(options.order)
@@ -57,6 +72,8 @@ export function buildQueryRecursively<T>(
     }
 
     // For each asked relation
+    const joinSet = new Set(qb.expressionMap.joinAttributes.map(join => join.entityOrProperty));
+    const newJoins = new Set<string>();
     tree.fields
         .filter((field: GraphQLQueryTree<T>) => field.isRelation())
         .forEach((relationTree: GraphQLQueryTree<T>) => {
@@ -64,14 +81,13 @@ export function buildQueryRecursively<T>(
 
             // If the relation query tree is asking for exists, we join it recursively
             if (relation) {
-                // We append _perch to avoid duplicate alias names when using joins with pagination
-                const relationAlias = qb.connection
-                    .namingStrategy
-                    .eagerJoinRelationAlias(alias, relation.propertyPath);
+                const path = alias + "." + relation.propertyPath;
+                if (!joinSet.has(path) && !newJoins.has(path)) {
+                    newJoins.add(path);
+                    qb.leftJoin(path, alias);
+                }
 
-                qb.leftJoin(alias + "." + relation.propertyPath, relationAlias);
-
-                buildQueryRecursively(relationTree, qb, relationAlias, relation.inverseEntityMetadata);
+                buildQueryRecursively(relationTree, qb, alias, relation.inverseEntityMetadata);
             }
         });
 }
