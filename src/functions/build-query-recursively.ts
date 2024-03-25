@@ -25,9 +25,9 @@ export function buildQueryRecursively<T>(
             if (field.isRelation() || selectSet.has(selection)) {
                 return acc;
             }
-            acc.push(selection)
+            acc.add(selection)
             return acc;
-        }, new Array<string>());
+        }, new Set<string>());
         // .filter((field: GraphQLQueryTree<T>) => !field.isRelation())
         // .map((field: GraphQLQueryTree<T>) => alias + "." + field.name);
 
@@ -39,13 +39,13 @@ export function buildQueryRecursively<T>(
             if (selectSet.has(argSelection)) {
                 return acc;
             }
-            acc.push(argSelection);
+            acc.add(argSelection);
             return acc;
-        }, new Array<string>());
+        }, new Set<string>());
 
     // We select all of above
-    qb.addSelect(argFields);
-    qb.addSelect(selectedFields);
+    qb.addSelect(Array.from(argFields));
+    qb.addSelect(Array.from(selectedFields));
 
     // We add order options
     Object.keys(options.order)
@@ -73,6 +73,7 @@ export function buildQueryRecursively<T>(
 
     // For each asked relation
     const joinSet = new Set(qb.expressionMap.joinAttributes.map(join => join.entityOrProperty));
+    const newJoins = new Set<string>();
     tree.fields
         .filter((field: GraphQLQueryTree<T>) => field.isRelation())
         .forEach((relationTree: GraphQLQueryTree<T>) => {
@@ -81,7 +82,8 @@ export function buildQueryRecursively<T>(
             // If the relation query tree is asking for exists, we join it recursively
             if (relation) {
                 const path = alias + "." + relation.propertyPath;
-                if (!joinSet.has(path)) {
+                if (!joinSet.has(path) && !newJoins.has(path)) {
+                    newJoins.add(path);
                     qb.leftJoin(path, alias);
                 }
 
